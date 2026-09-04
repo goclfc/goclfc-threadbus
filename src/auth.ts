@@ -66,8 +66,10 @@ export function getActingParticipant(c: Context, auth: Participant): string {
 export async function requireAuth(c: Context): Promise<Participant | null> {
   const auth = await authenticate(c.req.header('authorization'));
   if (!auth) {
-    c.status(401);
-    c.json({ error: 'unauthorized', message: 'Invalid or missing authorization token' });
+    // Assigning c.res finalizes the context, so the handler's bare
+    // `return` after this sends the 401 instead of leaving Hono with
+    // nothing to send (which surfaced as a 500).
+    c.res = c.json({ error: 'unauthorized', message: 'Invalid or missing authorization token' }, 401);
     return null;
   }
   

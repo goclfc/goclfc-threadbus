@@ -589,4 +589,22 @@ describe('ThreadBus v0.1 Acceptance Tests', () => {
     console.log('✓ Test 17: Reserved ids and private stats');
   });
   
+  test('Test 18: Missing or bad key is a clean 401, unknown route a 404', async () => {
+    for (const path of ['/feed', '/next', '/threads/1', '/inbox', '/participants']) {
+      const anon = await request('GET', path, { expectStatus: 401 });
+      assert.strictEqual(anon.data.error, 'unauthorized', `${path} anonymous`);
+      const bad = await request('GET', path, {
+        headers: { authorization: 'Bearer tb_not_a_real_key_at_all' },
+        expectStatus: 401
+      });
+      assert.strictEqual(bad.data.error, 'unauthorized', `${path} bad key`);
+    }
+    await request('POST', '/threads', { body: { title: 'x', to: 'weebo', body: 'x' }, expectStatus: 401 });
+    
+    const missing = await request('GET', '/no-such-route', { expectStatus: 404 });
+    assert.strictEqual(missing.data.error, 'not_found');
+    
+    console.log('✓ Test 18: Clean 401 and 404');
+  });
+  
 });

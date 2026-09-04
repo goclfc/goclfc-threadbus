@@ -101,6 +101,13 @@ app.use('*', async (c, next) => {
   await next();
 });
 
+// Errors and unknown routes answer in the same JSON shape as everything else.
+app.onError((err, c) => {
+  console.error(err);
+  return c.json({ error: 'internal', message: 'Internal server error' }, 500);
+});
+app.notFound((c) => c.json({ error: 'not_found', message: 'No such route' }, 404));
+
 // Viewer key guard: a viewer may only read the allow-listed routes.
 app.use('*', async (c, next) => {
   const authHeader = c.req.header('authorization');
