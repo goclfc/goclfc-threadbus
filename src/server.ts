@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { migrate, pool, testConnection } from './db.js';
+import { migrate, pool, testConnection, getDbSource, getDbSchema } from './db.js';
 import {
   authenticate,
   requireAuth,
@@ -93,7 +93,7 @@ app.get('/', async (c) => {
   
   return c.json({
     name: 'ThreadBus',
-    version: '0.1.0',
+    version: '0.1.1',
     description: 'A tiny HTTP service for threaded turn-based conversations',
     stats: {
       participants: parseInt(stats.participants),
@@ -117,7 +117,7 @@ app.get('/openapi.json', (c) => {
     openapi: '3.0.0',
     info: {
       title: 'ThreadBus API',
-      version: '0.1.0',
+      version: '0.1.1',
       description: 'A tiny HTTP service for threaded turn-based conversations'
     },
     servers: [{ url: process.env.PUBLIC_URL || 'http://localhost:3000' }],
@@ -561,10 +561,18 @@ app.delete('/threads/:id', async (c) => {
 const port = parseInt(process.env.PORT || '3000');
 
 async function start() {
-  console.log('ThreadBus v0.1 starting...');
+  console.log('ThreadBus v0.1.1 starting...');
   
-  if (!process.env.DATABASE_URL) {
-    console.error('DATABASE_URL is required');
+  try {
+    const dbSource = getDbSource();
+    console.log(`Database URL from: ${dbSource}`);
+    
+    const dbSchema = getDbSchema();
+    if (dbSchema) {
+      console.log(`Using DB schema: ${dbSchema}`);
+    }
+  } catch (err: any) {
+    console.error(err.message);
     process.exit(1);
   }
   

@@ -4,16 +4,64 @@ import { join } from 'path';
 
 const { Pool } = pg;
 
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+// Get DATABASE_URL with fallback to *_DATABASE_URL
+function getDatabaseUrl(): { url: string; source: string } {
+  if (process.env.DATABASE_URL) {
+    return { url: process.env.DATABASE_URL, source: 'DATABASE_URL' };
+  }
+  
+  // Find first env var ending with _DATABASE_URL
+  for (const key of Object.keys(process.env)) {
+    if (key.endsWith('_DATABASE_URL')) {
+      return { url: process.env[key]!, source: key };
+    }
+  }
+  
+  throw new Error('DATABASE_URL not found');
+}
+
+// Validate DB_SCHEMA name
+function validateSchemaName(schema: string): boolean {
+  return /^[a-z_][a-z0-9_]{0,62}$/.test(schema);
+}
+
+const dbConfig = getDatabaseUrl();
+const dbSchema = process.env.DB_SCHEMA;
+
+if (dbSchema && !validateSchemaName(dbSchema)) {
+  throw new Error(`Invalid DB_SCHEMA: must match ^[a-z_][a-z0-9_]{0,62}$`);
+}
+
+const poolOptions: any = {
+  connectionString: dbConfig.url,
   max: 20,
-});
+};
+
+// Set search_path if DB_SCHEMA is specified
+if (dbSchema) {
+  poolOptions.options = `-c search_path=${dbSchema}`;
+}
+
+export const pool = new Pool(poolOptions);
+
+export function getDbSource(): string {
+  return dbConfig.source;
+}
+
+export function getDbSchema(): string | undefined {
+  return dbSchema;
+}
 
 export async function migrate() {
   const migrationsDir = join(process.cwd(), 'migrations');
   
   const client = await pool.connect();
   try {
+    // Create schema if DB_SCHEMA is set
+    if (dbSchema) {
+      await client.query(`CREATE SCHEMA IF NOT EXISTS ${dbSchema}`);
+    }
+    
     await client.query('BEGIN');
     
     // Ensure migrations table exists

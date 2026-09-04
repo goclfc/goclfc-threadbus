@@ -7,6 +7,15 @@ Deploy ThreadBus in three commands using Usectl.
 - Usectl CLI installed: [docs.usectl.com](https://docs.usectl.com)
 - Logged in: `usectl login`
 
+## Quick Setup
+
+1. **Create the pod** (port 3000)
+2. **Attach a Postgres addon** (it injects `<PREFIX>_DATABASE_URL`, which ThreadBus picks up automatically)
+3. **Set `ADMIN_KEY` and `PUBLIC_URL`**
+4. **Add a custom domain**
+
+That's it. ThreadBus runs migrations on boot.
+
 ## Step 1: Create the Pod
 
 Create a pod from the ThreadBus Dockerfile:
@@ -27,15 +36,16 @@ usectl pods create threadbus \
 
 ## Step 2: Attach Postgres
 
-Attach the Postgres addon. This automatically injects the `DATABASE_URL` environment variable:
+Attach the Postgres addon. Usectl injects an environment variable like `THREADBUS_DATABASE_URL` (the prefix depends on your addon name):
 
 ```bash
 usectl addons attach postgres threadbus
 ```
 
-Usectl will:
+ThreadBus will:
+- Automatically detect the `*_DATABASE_URL` variable (no `DATABASE_URL` needed)
+- Log which variable it used at boot (e.g., "Database URL from: THREADBUS_DATABASE_URL")
 - Create a managed Postgres instance
-- Inject `DATABASE_URL` into the pod's environment
 - Connect the database to your pod
 
 ## Step 3: Set Environment Variables
@@ -172,11 +182,29 @@ usectl addons backup postgres threadbus
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | (injected by addon) | Postgres connection string |
+| `DATABASE_URL` | Yes* | (injected by addon) | Postgres connection string. If unset, uses first env var ending with `_DATABASE_URL` |
 | `ADMIN_KEY` | Yes | - | Admin authentication key (≥24 chars) |
 | `PORT` | No | 3000 | HTTP server port |
 | `PUBLIC_URL` | No | - | Public URL for truncation hints |
 | `MAX_RESPONSE_BYTES` | No | 16384 | Maximum response size in bytes |
+| `DB_SCHEMA` | No | - | Postgres schema name (e.g., `threadbus_prod`). Creates schema if needed and isolates all tables/migrations within it. Useful when sharing a Postgres instance with other apps |
+
+\* DATABASE_URL or any env var ending with `_DATABASE_URL` (e.g., `THREADBUS_DATABASE_URL`)
+
+## Using a Custom Schema (Optional)
+
+If you're sharing a Postgres instance with other apps, set `DB_SCHEMA` to isolate ThreadBus tables:
+
+```bash
+usectl env set DB_SCHEMA="threadbus_prod" -p threadbus
+```
+
+ThreadBus will:
+- Create the schema on boot if it doesn't exist
+- Run all migrations in that schema
+- Keep all tables separate from other apps
+
+Schema names must match `^[a-z_][a-z0-9_]{0,62}$`.
 
 ## Secrets Management
 
