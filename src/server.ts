@@ -7,7 +7,11 @@ import {
   generateKey,
   hashKey,
   validateParticipantId,
-  checkThreadAccess
+  checkThreadAccess,
+  isViewerKey,
+  viewerMayAccess,
+  isReadAllPrincipal,
+  VIEWER_ID
 } from './auth.js';
 import {
   validateThread,
@@ -97,8 +101,36 @@ app.use('*', async (c, next) => {
   await next();
 });
 
+// Viewer key guard: a viewer may only read the allow-listed routes.
+app.use('*', async (c, next) => {
+  const authHeader = c.req.header('authorization');
+  if (authHeader?.startsWith('Bearer ') && isViewerKey(authHeader.slice(7))) {
+    if (c.req.header('x-as')) {
+      return c.json({ error: 'forbidden', message: 'Viewer key cannot act as a participant' }, 403);
+    }
+    if (!viewerMayAccess(c.req.method, c.req.path)) {
+      return c.json({ error: 'forbidden', message: 'Viewer key is read-only' }, 403);
+    }
+  }
+  await next();
+});
+
 // GET /
 app.get('/', async (c) => {
+  const base = {
+    name: 'ThreadBus',
+    version: '0.1.3',
+    description: 'A tiny HTTP service for threaded turn-based conversations',
+    docs: '/openapi.json',
+    ui: '/ui'
+  };
+  
+  // Counts are only for callers holding a key; anonymous gets the banner.
+  const auth = await authenticate(c.req.header('authorization'));
+  if (!auth) {
+    return c.json(base);
+  }
+  
   const { rows: [stats] } = await pool.query(`
     SELECT 
       (SELECT COUNT(*) FROM participants) as participants,
@@ -108,17 +140,13 @@ app.get('/', async (c) => {
   `);
   
   return c.json({
-    name: 'ThreadBus',
-    version: '0.1.2',
-    description: 'A tiny HTTP service for threaded turn-based conversations',
+    ...base,
     stats: {
       participants: parseInt(stats.participants),
       open_threads: parseInt(stats.open_threads),
       resolved_threads: parseInt(stats.resolved_threads),
       messages: parseInt(stats.messages)
-    },
-    docs: '/openapi.json',
-    ui: '/ui'
+    }
   });
 });
 
@@ -134,7 +162,7 @@ app.get('/openapi.json', (c) => {
     openapi: '3.0.0',
     info: {
       title: 'ThreadBus API',
-      version: '0.1.2',
+      version: '0.1.3',
       description: 'A tiny HTTP service for threaded turn-based conversations'
     },
     servers: [{ url: getPublicUrl() || 'http://localhost:3000' }],
@@ -279,8 +307,8 @@ app.get('/threads/:id', async (c) => {
   const since = c.req.query('since');
   const all = c.req.query('all') === '1';
   
-  // Check access (admin sees all threads)
-  const isAdmin = auth.id === 'admin' && !c.req.header('x-as');
+  // Admin (not acting as anyone) and viewer see all threads
+  const isAdmin = isReadAllPrincipal(c, auth);
   if (!isAdmin) {
     const hasAccess = await checkThreadAccess(threadId, participantId);
     if (!hasAccess) {
@@ -356,9 +384,11 @@ app.get('/threads/:id/messages/:seq', async (c) => {
   const seq = parseInt(c.req.param('seq'));
   
   // Check access
-  const hasAccess = await checkThreadAccess(threadId, participantId);
-  if (!hasAccess) {
-    return c.json({ error: 'forbidden', message: 'Not a thread participant' }, 403);
+  if (!isReadAllPrincipal(c, auth)) {
+    const hasAccess = await checkThreadAccess(threadId, participantId);
+    if (!hasAccess) {
+      return c.json({ error: 'forbidden', message: 'Not a thread participant' }, 403);
+    }
   }
   
   const { rows: [message] } = await pool.query<Message>(
@@ -532,8 +562,8 @@ app.get('/threads', async (c) => {
   const auth = await requireAuth(c);
   if (!auth) return;
   
-  if (auth.id !== 'admin') {
-    return c.json({ error: 'forbidden', message: 'Admin only' }, 403);
+  if (auth.id !== 'admin' && auth.id !== VIEWER_ID) {
+    return c.json({ error: 'forbidden', message: 'Admin or viewer only' }, 403);
   }
   
   const status = c.req.query('status');
@@ -572,8 +602,8 @@ app.get('/feed', async (c) => {
   const auth = await requireAuth(c);
   if (!auth) return;
   
-  if (auth.id !== 'admin') {
-    return c.json({ error: 'forbidden', message: 'Admin only' }, 403);
+  if (auth.id !== 'admin' && auth.id !== VIEWER_ID) {
+    return c.json({ error: 'forbidden', message: 'Admin or viewer only' }, 403);
   }
   
   const status = c.req.query('status');
@@ -645,7 +675,7 @@ app.delete('/threads/:id', async (c) => {
 const port = parseInt(process.env.PORT || '3000');
 
 async function start() {
-  console.log('ThreadBus v0.1.2 starting...');
+  console.log('ThreadBus v0.1.3 starting...');
   
   try {
     const dbSource = getDbSource();
@@ -667,6 +697,18 @@ async function start() {
   if (!process.env.ADMIN_KEY || process.env.ADMIN_KEY.length < 24) {
     console.error('ADMIN_KEY is required and must be at least 24 characters');
     process.exit(1);
+  }
+  
+  if (process.env.VIEWER_KEY) {
+    if (process.env.VIEWER_KEY.length < 24) {
+      console.error('VIEWER_KEY must be at least 24 characters');
+      process.exit(1);
+    }
+    if (process.env.VIEWER_KEY === process.env.ADMIN_KEY) {
+      console.error('VIEWER_KEY must differ from ADMIN_KEY');
+      process.exit(1);
+    }
+    console.log('Viewer key enabled (read-only)');
   }
   
   console.log('Running migrations...');

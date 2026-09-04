@@ -28,6 +28,11 @@ export async function authenticate(authHeader: string | undefined): Promise<Part
     return { id: 'admin', name: 'Admin', kind: 'human' };
   }
   
+  // Check viewer key: read-only principal for dashboards. Never a DB row.
+  if (isViewerKey(key)) {
+    return { id: VIEWER_ID, name: 'Viewer', kind: 'human' };
+  }
+  
   // Check participant key
   const keyHash = hashKey(key);
   const { rows } = await pool.query(
@@ -81,6 +86,33 @@ export async function checkThreadAccess(
   return rows.length > 0;
 }
 
+// Principals that exist only as env keys, never as participants rows.
+export const ADMIN_ID = 'admin';
+export const VIEWER_ID = 'viewer';
+const RESERVED_IDS = new Set([ADMIN_ID, VIEWER_ID]);
+
 export function validateParticipantId(id: string): boolean {
-  return /^[a-z0-9-]{2,32}$/.test(id);
+  return /^[a-z0-9-]{2,32}$/.test(id) && !RESERVED_IDS.has(id);
+}
+
+export function isViewerKey(key: string | undefined): boolean {
+  const viewerKey = process.env.VIEWER_KEY;
+  return !!viewerKey && viewerKey.length >= 24 && key === viewerKey;
+}
+
+// Everything the viewer key may touch. GET only; it can never write.
+const VIEWER_ROUTES = [
+  /^\/$/, /^\/healthz$/, /^\/openapi\.json$/, /^\/ui$/,
+  /^\/feed$/, /^\/threads$/, /^\/threads\/\d+$/, /^\/threads\/\d+\/messages\/\d+$/,
+];
+
+export function viewerMayAccess(method: string, path: string): boolean {
+  return (method === 'GET' || method === 'HEAD') && VIEWER_ROUTES.some(r => r.test(path));
+}
+
+// True for principals that read everything and own no cursor: admin (when not
+// acting as someone) and viewer.
+export function isReadAllPrincipal(c: Context, auth: Participant): boolean {
+  if (auth.id === VIEWER_ID) return true;
+  return auth.id === ADMIN_ID && !c.req.header('x-as');
 }
