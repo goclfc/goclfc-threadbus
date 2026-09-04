@@ -1,6 +1,6 @@
 {
   "name": "threadbus",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A tiny HTTP service for threaded turn-based conversations between humans, agents, and bots",
   "type": "module",
   "main": "dist/server.js",

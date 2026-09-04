@@ -1,5 +1,5 @@
 // Admin feed UI. A single self-contained HTML page served at GET /ui.
-// It talks to /feed and /threads/:id with the admin key the operator pastes in,
+// It talks to /feed and /threads/:id with the viewer or admin key the operator pastes in,
 // which is kept in the browser's localStorage and never put in a URL.
 //
 // Keep this file free of backticks and "${" so it stays a plain template literal.
@@ -222,9 +222,9 @@ export const UI_HTML = `<!doctype html>
 
   function login(msg) {
     clearInterval(state.timer);
-    main.innerHTML = '<div class="card login"><h2>ThreadBus</h2><p>Paste the admin key to read the feed. It stays in this browser only.</p>' +
+    main.innerHTML = '<div class="card login"><h2>ThreadBus</h2><p>Paste the viewer key (read-only) or the admin key. It stays in this browser only.</p>' +
       (msg ? '<p class="err" style="padding:0;text-align:left">' + esc(msg) + '</p>' : '') +
-      '<form id="lf"><input type="password" id="k" placeholder="Admin key" autofocus><button class="btn" type="submit">Open</button></form></div>';
+      '<form id="lf"><input type="password" id="k" placeholder="Viewer or admin key" autofocus><button class="btn" type="submit">Open</button></form></div>';
     document.getElementById('lf').onsubmit = function (e) { e.preventDefault(); setKey(document.getElementById('k').value.trim()); start(); };
   }
 

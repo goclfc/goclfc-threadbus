@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3300';
 const ADMIN_KEY = process.env.ADMIN_KEY || 'admin_key_with_at_least_24_characters_here';
+const VIEWER_KEY = process.env.VIEWER_KEY || 'viewer_key_with_at_least_24_characters_here';
 const PORT = process.env.PORT || '3300';
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/threadbus';
 
@@ -64,6 +65,7 @@ before(async () => {
         ...process.env,
         DATABASE_URL,
         ADMIN_KEY,
+        VIEWER_KEY,
         PORT,
         // Deliberately wrong: a connection string in PUBLIC_URL must never be echoed
         PUBLIC_URL: 'postgres://user:secret@db.internal:5432/threadbus'
@@ -535,6 +537,56 @@ describe('ThreadBus v0.1 Acceptance Tests', () => {
     assert.ok(res.data.includes("'/feed?limit="));
     
     console.log('✓ Test 15: UI page');
+  });
+  
+  test('Test 16: Viewer key reads everything and writes nothing', async () => {
+    const V = { authorization: `Bearer ${VIEWER_KEY}` };
+    
+    // Reads that must work
+    const feed = await request('GET', '/feed', { headers: V, expectStatus: 200 });
+    assert.ok(feed.data.threads.length > 0);
+    assert.strictEqual(feed.headers.get('x-threadbus-participant'), 'viewer');
+    const id = feed.data.threads[0].id;
+    const thread = await request('GET', `/threads/${id}`, { headers: V, expectStatus: 200 });
+    assert.ok(thread.data.messages.length > 0, 'viewer sees all messages');
+    await request('GET', `/threads/${id}/messages/1`, { headers: V, expectStatus: 200 });
+    await request('GET', '/threads', { headers: V, expectStatus: 200 });
+    
+    // Reading twice must not create or move any cursor
+    await request('GET', `/threads/${id}`, { headers: V, expectStatus: 200 });
+    
+    // Writes and bot endpoints are refused
+    await request('POST', '/threads', { headers: V, body: { title: 'x', to: 'weebo', body: 'x' }, expectStatus: 403 });
+    await request('POST', `/threads/${id}/messages`, { headers: V, body: { body: 'x', to: 'weebo' }, expectStatus: 403 });
+    await request('POST', `/threads/${id}/status`, { headers: V, body: { status: 'archived' }, expectStatus: 403 });
+    await request('DELETE', `/threads/${id}`, { headers: V, expectStatus: 403 });
+    await request('POST', '/participants', { headers: V, body: { id: 'evil', name: 'x', kind: 'agent' }, expectStatus: 403 });
+    await request('GET', '/participants', { headers: V, expectStatus: 403 });
+    await request('GET', '/next', { headers: V, expectStatus: 403 });
+    await request('GET', '/inbox', { headers: V, expectStatus: 403 });
+    await request('GET', '/digest', { headers: V, expectStatus: 403 });
+    
+    // Cannot impersonate a participant
+    await request('GET', `/threads/${id}`, { headers: { ...V, 'x-as': 'claude' }, expectStatus: 403 });
+    
+    console.log('✓ Test 16: Viewer key is read-only');
+  });
+  
+  test('Test 17: Reserved ids and private stats', async () => {
+    for (const id of ['admin', 'viewer']) {
+      await request('POST', '/participants', {
+        headers: { authorization: `Bearer ${ADMIN_KEY}` },
+        body: { id, name: 'Nope', kind: 'agent' },
+        expectStatus: 400
+      });
+    }
+    
+    const anon = await request('GET', '/', { expectStatus: 200 });
+    assert.strictEqual(anon.data.stats, undefined, 'anonymous root must not expose counts');
+    const keyed = await request('GET', '/', { headers: { authorization: `Bearer ${VIEWER_KEY}` }, expectStatus: 200 });
+    assert.ok(keyed.data.stats && typeof keyed.data.stats.messages === 'number');
+    
+    console.log('✓ Test 17: Reserved ids and private stats');
   });
   
 });
