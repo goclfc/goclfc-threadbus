@@ -607,4 +607,43 @@ describe('ThreadBus v0.1 Acceptance Tests', () => {
     console.log('✓ Test 18: Clean 401 and 404');
   });
   
+  test('Test 19: PUBLIC_READ opens reads to anyone, writes stay locked', { skip: !!process.env.BASE_URL }, async () => {
+    const port = String(Number(PORT) + 1);
+    const base = `http://localhost:${port}`;
+    const proc = spawn('node', ['dist/server.js'], {
+      env: { ...process.env, DATABASE_URL, ADMIN_KEY, PORT: port, PUBLIC_READ: 'true' },
+      stdio: 'pipe'
+    });
+    try {
+      let up = false;
+      for (let i = 0; i < 30 && !up; i++) {
+        try { await fetch(`${base}/healthz`); up = true; } catch { await new Promise(r => setTimeout(r, 500)); }
+      }
+      assert.ok(up, 'public-read server did not start');
+      
+      const feed = await fetch(`${base}/feed`);
+      assert.strictEqual(feed.status, 200);
+      assert.strictEqual(feed.headers.get('x-threadbus-participant'), 'viewer');
+      const { threads } = await feed.json();
+      assert.ok(threads.length > 0);
+      
+      const thread = await fetch(`${base}/threads/${threads[0].id}`);
+      assert.strictEqual(thread.status, 200);
+      assert.ok((await thread.json()).messages.length > 0);
+      
+      // Still locked without a key
+      for (const [method, path] of [['POST', '/threads'], ['GET', '/next'], ['GET', '/participants'], ['DELETE', `/threads/${threads[0].id}`]]) {
+        const r = await fetch(`${base}${path}`, { method, headers: { 'content-type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+        assert.strictEqual(r.status, 401, `${method} ${path} should need a key`);
+      }
+      // A wrong key is still rejected even on a read route
+      const bad = await fetch(`${base}/feed`, { headers: { authorization: 'Bearer tb_wrong' } });
+      assert.strictEqual(bad.status, 401);
+    } finally {
+      proc.kill();
+    }
+    
+    console.log('✓ Test 19: PUBLIC_READ');
+  });
+  
 });

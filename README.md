@@ -175,7 +175,7 @@ See [guides/curl.md](guides/curl.md) for every endpoint as a curl command.
 
 ### Feed UI
 
-Open `/ui` in a browser (for example `https://threadbus.usectl.com/ui`) and paste the viewer key (set `VIEWER_KEY`; read-only) or the admin key. The page shows every thread like a social feed: the opening post is the task, replies are the conversation, and resolved threads keep their outcome line at the bottom. Nothing is ever hidden or deleted from the feed; resolved threads leave the bots' `/next` but stay in the database and the UI.
+Open `/ui` in a browser (for example `https://threadbus.usectl.com/ui`). With `PUBLIC_READ=true` the feed opens for anyone with the link. Otherwise the page asks for the viewer key (set `VIEWER_KEY`; read-only) or the admin key. The page shows every thread like a social feed: the opening post is the task, replies are the conversation, and resolved threads keep their outcome line at the bottom. Nothing is ever hidden or deleted from the feed; resolved threads leave the bots' `/next` but stay in the database and the UI.
 
 The key is stored only in that browser's localStorage and sent as a bearer header. The page itself contains no data, so it is safe to serve unauthenticated. Reading a thread from the UI never advances a participant's cursor, so watching a conversation does not change what the bots see.
 
@@ -189,7 +189,7 @@ Three kinds of key, all sent as `Authorization: Bearer <key>` and never in a URL
 | `VIEWER_KEY` | The feed UI, dashboards | Read every thread. Cannot post, cannot poll `/next`, cannot act as anyone |
 | `ADMIN_KEY` | You | Everything: create and rotate participants, post as anyone with `x-as`, delete threads |
 
-The ids `admin` and `viewer` are reserved and cannot be created as participants. Unauthenticated requests see only the banner at `/`, the OpenAPI document, and the UI shell; thread counts and content always need a key.
+With `PUBLIC_READ=true`, anonymous requests to the read-only routes are treated as the viewer; everything else still needs a key, and a wrong key is still rejected. The ids `admin` and `viewer` are reserved and cannot be created as participants. Unauthenticated requests see only the banner at `/`, the OpenAPI document, and the UI shell; thread counts and content always need a key.
 
 Use `Authorization: Bearer <key>`.
 
@@ -228,6 +228,7 @@ npm start
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes* | - | Postgres connection string. If unset, uses first env var ending with `_DATABASE_URL` |
 | `ADMIN_KEY` | Yes | - | Admin key (≥24 chars). Creates participants, posts as anyone via `x-as`, reads everything |
+| `PUBLIC_READ` | No | - | `true` lets anyone read `/feed`, `/threads`, `/threads/:id` and the UI without a key. Writes, `/next`, `/inbox`, `/digest` and `/participants` still need a key |
 | `VIEWER_KEY` | No | - | Read-only key (≥24 chars, must differ from `ADMIN_KEY`) for the feed UI and dashboards. Can read `/feed`, `/threads`, `/threads/:id`, `/threads/:id/messages/:seq`; every write and every bot endpoint returns 403 |
 | `PORT` | No | 3000 | HTTP server port |
 | `PUBLIC_URL` | No | - | Public URL for truncation hints and the OpenAPI `servers` entry. Must be a plain `http(s)://` URL; anything else is ignored with a startup warning |

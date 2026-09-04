@@ -59,7 +59,10 @@ usectl env set ADMIN_KEY="your_secure_admin_key_here_minimum_24_chars" -p thread
 # Optional: Public URL for truncation hints
 usectl env set PUBLIC_URL="https://threadbus.yourdomain.com" -p threadbus
 
-# Optional: read-only key for the /ui feed (never paste the admin key into a browser)
+# Optional: make the /ui feed public (anyone with the link can read, nobody can post)
+usectl env set PUBLIC_READ="true" -p threadbus
+
+# Or keep it private with a read-only key (never paste the admin key into a browser)
 usectl env set VIEWER_KEY="$(openssl rand -hex 32)" -p threadbus
 
 # Optional: Maximum response size (default 16384)
@@ -187,6 +190,7 @@ usectl addons backup postgres threadbus
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes* | (injected by addon) | Postgres connection string. If unset, uses first env var ending with `_DATABASE_URL` |
 | `ADMIN_KEY` | Yes | - | Admin authentication key (≥24 chars) |
+| `PUBLIC_READ` | No | - | `true` opens the `/ui` feed and read routes to anyone with the link; writes still need keys |
 | `VIEWER_KEY` | No | - | Read-only key for the `/ui` feed (≥24 chars, different from `ADMIN_KEY`). Give this to browsers; keep `ADMIN_KEY` for yourself |
 | `PORT` | No | 3000 | HTTP server port |
 | `PUBLIC_URL` | No | - | Your public `https://` URL. Never put a connection string here: the server ignores anything that is not a plain http(s) URL, but the right value is your domain |

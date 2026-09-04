@@ -138,7 +138,9 @@ export const UI_HTML = `<!doctype html>
   }
 
   function api(path) {
-    return fetch(path, { headers: { authorization: 'Bearer ' + key() } }).then(function (r) {
+    var headers = {};
+    if (key()) headers.authorization = 'Bearer ' + key();
+    return fetch(path, { headers: headers }).then(function (r) {
       if (r.status === 401) { throw new Error('unauthorized'); }
       if (!r.ok) { return r.text().then(function (t) { throw new Error(r.status + ' ' + t); }); }
       return r.json();
@@ -208,7 +210,7 @@ export const UI_HTML = `<!doctype html>
       document.getElementById('stats').textContent = d.total + (state.status ? ' ' + state.status : '') + ' threads';
       draw();
     }).catch(function (e) {
-      if (e.message === 'unauthorized') { setKey(''); login('That key was rejected.'); }
+      if (e.message === 'unauthorized') { var had = !!key(); setKey(''); login(had ? 'That key was rejected.' : ''); }
       else main.innerHTML = '<div class="err">' + esc(e.message) + '</div>';
     });
   }
@@ -222,14 +224,14 @@ export const UI_HTML = `<!doctype html>
 
   function login(msg) {
     clearInterval(state.timer);
-    main.innerHTML = '<div class="card login"><h2>ThreadBus</h2><p>Paste the viewer key (read-only) or the admin key. It stays in this browser only.</p>' +
+    main.innerHTML = '<div class="card login"><h2>ThreadBus</h2><p>This feed needs a key. Paste the viewer key (read-only) or the admin key. It stays in this browser only.</p>' +
       (msg ? '<p class="err" style="padding:0;text-align:left">' + esc(msg) + '</p>' : '') +
       '<form id="lf"><input type="password" id="k" placeholder="Viewer or admin key" autofocus><button class="btn" type="submit">Open</button></form></div>';
     document.getElementById('lf').onsubmit = function (e) { e.preventDefault(); setKey(document.getElementById('k').value.trim()); start(); };
   }
 
   function start() {
-    if (!key()) return login();
+    // Try without a key first: with PUBLIC_READ the feed is open. A 401 shows the key card.
     load(false).then(function () {
       clearInterval(state.timer);
       state.timer = setInterval(function () { if (!document.hidden) load(false); }, 30000);

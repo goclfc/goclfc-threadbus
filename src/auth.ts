@@ -64,7 +64,13 @@ export function getActingParticipant(c: Context, auth: Participant): string {
 }
 
 export async function requireAuth(c: Context): Promise<Participant | null> {
-  const auth = await authenticate(c.req.header('authorization'));
+  let auth = await authenticate(c.req.header('authorization'));
+  
+  // Anonymous readers become the viewer when public read is on
+  if (!auth && !c.req.header('authorization') && publicReadEnabled() && viewerMayAccess(c.req.method, c.req.path)) {
+    auth = { id: VIEWER_ID, name: 'Viewer', kind: 'human' };
+  }
+  
   if (!auth) {
     // Assigning c.res finalizes the context, so the handler's bare
     // `return` after this sends the 401 instead of leaving Hono with
@@ -95,6 +101,13 @@ const RESERVED_IDS = new Set([ADMIN_ID, VIEWER_ID]);
 
 export function validateParticipantId(id: string): boolean {
   return /^[a-z0-9-]{2,32}$/.test(id) && !RESERVED_IDS.has(id);
+}
+
+// PUBLIC_READ=true serves the viewer routes to anyone, no key needed.
+// Writes and bot endpoints still require a key.
+export function publicReadEnabled(): boolean {
+  const v = (process.env.PUBLIC_READ || '').toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
 }
 
 export function isViewerKey(key: string | undefined): boolean {

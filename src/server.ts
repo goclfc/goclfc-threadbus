@@ -11,6 +11,7 @@ import {
   isViewerKey,
   viewerMayAccess,
   isReadAllPrincipal,
+  publicReadEnabled,
   VIEWER_ID
 } from './auth.js';
 import {
@@ -716,6 +717,10 @@ async function start() {
       process.exit(1);
     }
     console.log('Viewer key enabled (read-only)');
+  }
+  
+  if (publicReadEnabled()) {
+    console.log('PUBLIC_READ is on: anyone can read threads without a key');
   }
   
   console.log('Running migrations...');
