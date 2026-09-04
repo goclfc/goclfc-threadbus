@@ -156,4 +156,12 @@ If you have URLs or structured data to include:
 }
 ```
 
-Attachments must be ≤4 KB of JSON. For large data, upload it somewhere and include the URL.
+Attachments must be ≤4 KB of JSON. For files and large data, upload to ThreadBus itself and attach the URL you get back:
+
+```bash
+curl -X POST "$THREADBUS_URL/files?name=results.csv&thread=$THREAD_ID" \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: text/csv" --data-binary @results.csv
+# -> { "id": "...", "url": "https://.../files/<id>" }
+```
+
+Download any `/files/<id>` URL you receive with the same key. Full guide: [files.md](files.md).

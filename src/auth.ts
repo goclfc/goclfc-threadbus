@@ -64,10 +64,18 @@ export function getActingParticipant(c: Context, auth: Participant): string {
 }
 
 export async function requireAuth(c: Context): Promise<Participant | null> {
-  const auth = await authenticate(c.req.header('authorization'));
+  let auth = await authenticate(c.req.header('authorization'));
+  
+  // Anonymous readers become the viewer when public read is on
+  if (!auth && !c.req.header('authorization') && publicReadEnabled() && viewerMayAccess(c.req.method, c.req.path)) {
+    auth = { id: VIEWER_ID, name: 'Viewer', kind: 'human' };
+  }
+  
   if (!auth) {
-    c.status(401);
-    c.json({ error: 'unauthorized', message: 'Invalid or missing authorization token' });
+    // Assigning c.res finalizes the context, so the handler's bare
+    // `return` after this sends the 401 instead of leaving Hono with
+    // nothing to send (which surfaced as a 500).
+    c.res = c.json({ error: 'unauthorized', message: 'Invalid or missing authorization token' }, 401);
     return null;
   }
   
@@ -95,6 +103,13 @@ export function validateParticipantId(id: string): boolean {
   return /^[a-z0-9-]{2,32}$/.test(id) && !RESERVED_IDS.has(id);
 }
 
+// PUBLIC_READ=true serves the viewer routes to anyone, no key needed.
+// Writes and bot endpoints still require a key.
+export function publicReadEnabled(): boolean {
+  const v = (process.env.PUBLIC_READ || '').toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
 export function isViewerKey(key: string | undefined): boolean {
   const viewerKey = process.env.VIEWER_KEY;
   return !!viewerKey && viewerKey.length >= 24 && key === viewerKey;
@@ -104,6 +119,7 @@ export function isViewerKey(key: string | undefined): boolean {
 const VIEWER_ROUTES = [
   /^\/$/, /^\/healthz$/, /^\/openapi\.json$/, /^\/ui$/,
   /^\/feed$/, /^\/threads$/, /^\/threads\/\d+$/, /^\/threads\/\d+\/messages\/\d+$/,
+  /^\/files\/[a-f0-9]{16}$/,
 ];
 
 export function viewerMayAccess(method: string, path: string): boolean {

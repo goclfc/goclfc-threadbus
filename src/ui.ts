@@ -131,14 +131,19 @@ export const UI_HTML = `<!doctype html>
     var items = [];
     Object.keys(a).forEach(function (k) {
       var v = a[k];
-      if (typeof v === 'string' && /^https?:\\/\\//.test(v)) items.push('<a href="' + esc(v) + '" target="_blank" rel="noopener">' + esc(k) + '</a>');
+      if (typeof v === 'string' && (/^https?:\\/\\//.test(v) || v.indexOf('/files/') === 0)) {
+        var isFile = /\\/files\\/[a-f0-9]{16}$/.test(v);
+        items.push('<a href="' + esc(v) + '"' + (isFile ? ' data-file="1"' : '') + ' target="_blank" rel="noopener">' + (isFile ? '&#128206; ' : '') + esc(k) + '</a>');
+      }
       else items.push('<span title="' + esc(JSON.stringify(v)) + '">' + esc(k) + '</span>');
     });
     return items.length ? '<div class="att">Attachments: ' + items.join('') + '</div>' : '';
   }
 
   function api(path) {
-    return fetch(path, { headers: { authorization: 'Bearer ' + key() } }).then(function (r) {
+    var headers = {};
+    if (key()) headers.authorization = 'Bearer ' + key();
+    return fetch(path, { headers: headers }).then(function (r) {
       if (r.status === 401) { throw new Error('unauthorized'); }
       if (!r.ok) { return r.text().then(function (t) { throw new Error(r.status + ' ' + t); }); }
       return r.json();
@@ -208,7 +213,7 @@ export const UI_HTML = `<!doctype html>
       document.getElementById('stats').textContent = d.total + (state.status ? ' ' + state.status : '') + ' threads';
       draw();
     }).catch(function (e) {
-      if (e.message === 'unauthorized') { setKey(''); login('That key was rejected.'); }
+      if (e.message === 'unauthorized') { var had = !!key(); setKey(''); login(had ? 'That key was rejected.' : ''); }
       else main.innerHTML = '<div class="err">' + esc(e.message) + '</div>';
     });
   }
@@ -222,14 +227,14 @@ export const UI_HTML = `<!doctype html>
 
   function login(msg) {
     clearInterval(state.timer);
-    main.innerHTML = '<div class="card login"><h2>ThreadBus</h2><p>Paste the viewer key (read-only) or the admin key. It stays in this browser only.</p>' +
+    main.innerHTML = '<div class="card login"><h2>ThreadBus</h2><p>This feed needs a key. Paste the viewer key (read-only) or the admin key. It stays in this browser only.</p>' +
       (msg ? '<p class="err" style="padding:0;text-align:left">' + esc(msg) + '</p>' : '') +
       '<form id="lf"><input type="password" id="k" placeholder="Viewer or admin key" autofocus><button class="btn" type="submit">Open</button></form></div>';
     document.getElementById('lf').onsubmit = function (e) { e.preventDefault(); setKey(document.getElementById('k').value.trim()); start(); };
   }
 
   function start() {
-    if (!key()) return login();
+    // Try without a key first: with PUBLIC_READ the feed is open. A 401 shows the key card.
     load(false).then(function () {
       clearInterval(state.timer);
       state.timer = setInterval(function () { if (!document.hidden) load(false); }, 30000);
@@ -237,6 +242,16 @@ export const UI_HTML = `<!doctype html>
   }
 
   main.addEventListener('click', function (e) {
+    var a = e.target.closest('a[data-file]');
+    if (a && key()) {
+      // With a key in use the browser cannot send it on a plain link, so fetch and open a blob
+      e.preventDefault();
+      fetch(a.getAttribute('href'), { headers: { authorization: 'Bearer ' + key() } })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.blob(); })
+        .then(function (blob) { window.open(URL.createObjectURL(blob), '_blank'); })
+        .catch(function (err) { alert('Could not open file: ' + err.message); });
+      return;
+    }
     var b = e.target.closest('button');
     if (!b) return;
     if (b.id === 'more') return load(true);

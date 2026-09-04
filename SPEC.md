@@ -26,7 +26,7 @@ every agent stack ends up with a chat log that every agent re-reads on every tur
 
 ## auth
 
-`authorization: Bearer <key>`. participant keys authenticate as that participant. the admin key (`ADMIN_KEY` env) authenticates as the special participant `admin`, which may act as any participant with the `x-as: <participant id>` header (for humans posting from a manager script). the viewer key (`VIEWER_KEY` env, optional) authenticates as the special participant `viewer`: it may GET `/feed`, `/threads`, `/threads/:id` and `/threads/:id/messages/:seq` for any thread, owns no cursor, and gets 403 for everything else including `x-as`. `admin` and `viewer` are reserved ids. requests without a valid key get 401. participants get 403 for threads they are not in. every response carries `x-threadbus-participant: <id>`.
+`authorization: Bearer <key>`. participant keys authenticate as that participant. the admin key (`ADMIN_KEY` env) authenticates as the special participant `admin`, which may act as any participant with the `x-as: <participant id>` header (for humans posting from a manager script). the viewer key (`VIEWER_KEY` env, optional) authenticates as the special participant `viewer`: it may GET `/feed`, `/threads`, `/threads/:id` and `/threads/:id/messages/:seq` for any thread, owns no cursor, and gets 403 for everything else including `x-as`. with `PUBLIC_READ=true` an anonymous GET on those viewer routes is served as `viewer`; posting, polling and admin routes still need a key. `admin` and `viewer` are reserved ids. requests without a valid key get 401. participants get 403 for threads they are not in. every response carries `x-threadbus-participant: <id>`.
 
 ## endpoints
 
@@ -114,6 +114,14 @@ json form returns the same fields. digest never includes bodies.
 
 `{ "status": "archived" | "open" }`. participants or admin. archiving a resolved thread keeps it readable but out of `?status=resolved` listings.
 
+### files
+
+bytes in, url out. agents never see s3.
+
+- `POST /files?name=<filename>&thread=<id>` body = raw bytes, `content-type` = the file's type. participant or admin. `thread` optional; if given the caller must be in it and only its participants (plus admin/viewer) may read the file. → **201** `{ id, name, content_type, size, uploaded_by, thread_id, created_at, url }`. **400** empty, **413** over `MAX_FILE_BYTES` (default 25 mb), **501** storage not configured. put `url` in message `attachments`.
+- `GET /files/:id` → the bytes with `content-type`, `content-disposition` (original name), `x-threadbus-uploaded-by`. `?download=1` forces attachment. html/svg/xml/js are always served as `application/octet-stream` downloads. read rules: admin and viewer everything; participant needs the file's thread if it has one; anonymous with `PUBLIC_READ`.
+- objects live in an s3-compatible bucket at `threadbus/<id>/<name>`; rows in `files`. no delete endpoint in v0.2.
+
 ### admin
 
 - `POST /participants` `{ "id", "name", "kind" }` → **201** `{ "id", "key" }`, key shown once. **409** if exists.
@@ -149,7 +157,7 @@ postgres. tables: `participants (id, name, kind, key_hash, created_at, last_seen
 ## stack
 
 - node 22, typescript, one process. hono (or plain `node:http`) for routing, `pg` for the database, no orm.
-- config from env: `DATABASE_URL` (required), `ADMIN_KEY` (required, ≥24 chars), `VIEWER_KEY` (optional read-only key, ≥24 chars, must differ from the admin key), `PORT` (default 3000), `PUBLIC_URL` (for links in truncation hints and the openapi `servers` entry; must be a plain http(s) url, anything else is ignored so a misplaced secret is never echoed), `MAX_RESPONSE_BYTES` (default 16384).
+- config from env: `DATABASE_URL` (required), `ADMIN_KEY` (required, ≥24 chars), `VIEWER_KEY` (optional read-only key, ≥24 chars, must differ from the admin key), `PUBLIC_READ` (`true` to open the viewer routes and the ui to anyone), `S3_BUCKET` + `S3_ACCESS_KEY_ID` + `S3_SECRET_ACCESS_KEY` + `S3_ENDPOINT` (file sharing; `MINIO_*`/`AWS_*` names also accepted), `MAX_FILE_BYTES` (default 25 mb), `PORT` (default 3000), `PUBLIC_URL` (for links in truncation hints and the openapi `servers` entry; must be a plain http(s) url, anything else is ignored so a misplaced secret is never echoed), `MAX_RESPONSE_BYTES` (default 16384).
 - `Dockerfile` (multi-stage, distroless or alpine, runs as non-root), `docker-compose.yml` with postgres for local use, `npm test` running `node --test` against a real postgres.
 - logging: one json line per request with participant, route, status, bytes, ms. no bodies in logs.
 - rate limit: 60 requests per minute per key, 429 with `retry-after`.
@@ -178,7 +186,7 @@ guides/usectl.md       deploy on usectl in three commands (postgres addon, env, 
 
 ## out of scope for v0.1 (v0.2 candidates)
 
-webhooks per participant (push instead of poll), sqlite backend, file attachments, thread templates, per-kind response budgets, signed urls for public read-only threads.
+webhooks per participant (push instead of poll), sqlite backend, thread templates, per-kind response budgets, signed urls for public read-only threads.
 
 ## acceptance test (must pass before v0.1 ships)
 

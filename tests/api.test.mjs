@@ -589,4 +589,137 @@ describe('ThreadBus v0.1 Acceptance Tests', () => {
     console.log('✓ Test 17: Reserved ids and private stats');
   });
   
+  test('Test 18: Missing or bad key is a clean 401, unknown route a 404', async () => {
+    for (const path of ['/feed', '/next', '/threads/1', '/inbox', '/participants']) {
+      const anon = await request('GET', path, { expectStatus: 401 });
+      assert.strictEqual(anon.data.error, 'unauthorized', `${path} anonymous`);
+      const bad = await request('GET', path, {
+        headers: { authorization: 'Bearer tb_not_a_real_key_at_all' },
+        expectStatus: 401
+      });
+      assert.strictEqual(bad.data.error, 'unauthorized', `${path} bad key`);
+    }
+    await request('POST', '/threads', { body: { title: 'x', to: 'weebo', body: 'x' }, expectStatus: 401 });
+    
+    const missing = await request('GET', '/no-such-route', { expectStatus: 404 });
+    assert.strictEqual(missing.data.error, 'not_found');
+    
+    console.log('✓ Test 18: Clean 401 and 404');
+  });
+  
+  test('Test 19: PUBLIC_READ opens reads to anyone, writes stay locked', { skip: !!process.env.BASE_URL }, async () => {
+    const port = String(Number(PORT) + 1);
+    const base = `http://localhost:${port}`;
+    const proc = spawn('node', ['dist/server.js'], {
+      env: { ...process.env, DATABASE_URL, ADMIN_KEY, PORT: port, PUBLIC_READ: 'true' },
+      stdio: 'pipe'
+    });
+    try {
+      let up = false;
+      for (let i = 0; i < 30 && !up; i++) {
+        try { await fetch(`${base}/healthz`); up = true; } catch { await new Promise(r => setTimeout(r, 500)); }
+      }
+      assert.ok(up, 'public-read server did not start');
+      
+      const feed = await fetch(`${base}/feed`);
+      assert.strictEqual(feed.status, 200);
+      assert.strictEqual(feed.headers.get('x-threadbus-participant'), 'viewer');
+      const { threads } = await feed.json();
+      assert.ok(threads.length > 0);
+      
+      const thread = await fetch(`${base}/threads/${threads[0].id}`);
+      assert.strictEqual(thread.status, 200);
+      assert.ok((await thread.json()).messages.length > 0);
+      
+      // Still locked without a key
+      for (const [method, path] of [['POST', '/threads'], ['GET', '/next'], ['GET', '/participants'], ['DELETE', `/threads/${threads[0].id}`]]) {
+        const r = await fetch(`${base}${path}`, { method, headers: { 'content-type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+        assert.strictEqual(r.status, 401, `${method} ${path} should need a key`);
+      }
+      // A wrong key is still rejected even on a read route
+      const bad = await fetch(`${base}/feed`, { headers: { authorization: 'Bearer tb_wrong' } });
+      assert.strictEqual(bad.status, 401);
+    } finally {
+      proc.kill();
+    }
+    
+    console.log('✓ Test 19: PUBLIC_READ');
+  });
+
+  test('Test 20: Shared files', { skip: !process.env.S3_BUCKET && 'S3_* env not set' }, async () => {
+    const C = { authorization: `Bearer ${claudeKey}` };
+    const W = { authorization: `Bearer ${weeboKey}` };
+    const M = { authorization: `Bearer ${marioKey}` };
+    const A = { authorization: `Bearer ${ADMIN_KEY}` };
+    const V = { authorization: `Bearer ${VIEWER_KEY}` };
+    
+    // Feature is advertised
+    const banner = await request('GET', '/', { headers: C, expectStatus: 200 });
+    assert.strictEqual(banner.data.features.files, true);
+    
+    // A thread between claude and weebo only
+    const t = await request('POST', '/threads', {
+      headers: C, body: { title: 'Files', to: 'weebo', body: 'Sending you the report' }, expectStatus: 201
+    });
+    const threadId = t.data.id;
+    
+    // Upload raw bytes
+    const up = await fetch(`${BASE_URL}/files?name=../report.txt&thread=${threadId}`, {
+      method: 'POST', headers: { ...C, 'content-type': 'text/plain' }, body: 'hello from claude'
+    });
+    const upText = await up.text();
+    assert.strictEqual(up.status, 201, upText);
+    const file = JSON.parse(upText);
+    assert.match(file.id, /^[a-f0-9]{16}$/);
+    assert.strictEqual(file.name, 'report.txt', 'path parts are stripped');
+    assert.strictEqual(file.size, 17);
+    assert.strictEqual(file.content_type, 'text/plain');
+    assert.strictEqual(file.uploaded_by, 'claude');
+    assert.strictEqual(file.thread_id, threadId);
+    assert.ok(file.url.endsWith(`/files/${file.id}`));
+    
+    // Attach it to a message
+    await request('POST', `/threads/${threadId}/messages`, {
+      headers: C, body: { body: 'Report attached', to: 'weebo', attachments: { report: file.url } }, expectStatus: 201
+    });
+    
+    // weebo (participant) downloads it
+    const dl = await fetch(`${BASE_URL}/files/${file.id}`, { headers: W });
+    assert.strictEqual(dl.status, 200);
+    assert.strictEqual(dl.headers.get('content-type'), 'text/plain');
+    assert.strictEqual(dl.headers.get('content-disposition'), 'inline; filename="report.txt"');
+    assert.strictEqual(await dl.text(), 'hello from claude');
+    
+    // mario is not in the thread
+    assert.strictEqual((await fetch(`${BASE_URL}/files/${file.id}`, { headers: M })).status, 403);
+    // admin and viewer read everything, anonymous nothing
+    assert.strictEqual((await fetch(`${BASE_URL}/files/${file.id}`, { headers: A })).status, 200);
+    assert.strictEqual((await fetch(`${BASE_URL}/files/${file.id}`, { headers: V })).status, 200);
+    assert.strictEqual((await fetch(`${BASE_URL}/files/${file.id}`)).status, 401);
+    // viewer cannot upload
+    assert.strictEqual((await fetch(`${BASE_URL}/files?name=x.txt`, { method: 'POST', headers: { ...V, 'content-type': 'text/plain' }, body: 'x' })).status, 403);
+    // mario cannot upload into a thread he is not in
+    assert.strictEqual((await fetch(`${BASE_URL}/files?name=x.txt&thread=${threadId}`, { method: 'POST', headers: { ...M, 'content-type': 'text/plain' }, body: 'x' })).status, 403);
+    // empty body is rejected
+    assert.strictEqual((await fetch(`${BASE_URL}/files?name=x.txt`, { method: 'POST', headers: { ...C, 'content-type': 'text/plain' } })).status, 400);
+    // unknown id
+    assert.strictEqual((await fetch(`${BASE_URL}/files/0000000000000000`, { headers: C })).status, 404);
+    
+    // A file without a thread is readable by any participant
+    const shared = await (await fetch(`${BASE_URL}/files?name=notes.md`, {
+      method: 'POST', headers: { ...W, 'content-type': 'text/markdown' }, body: '# notes'
+    })).json();
+    assert.strictEqual((await fetch(`${BASE_URL}/files/${shared.id}`, { headers: M })).status, 200);
+    
+    // HTML is never rendered on our origin
+    const html = await (await fetch(`${BASE_URL}/files?name=page.html`, {
+      method: 'POST', headers: { ...C, 'content-type': 'text/html' }, body: '<script>alert(1)</script>'
+    })).json();
+    const hres = await fetch(`${BASE_URL}/files/${html.id}`, { headers: C });
+    assert.strictEqual(hres.headers.get('content-type'), 'application/octet-stream');
+    assert.ok(hres.headers.get('content-disposition').startsWith('attachment'));
+    
+    console.log('✓ Test 20: Shared files');
+  });
+  
 });
