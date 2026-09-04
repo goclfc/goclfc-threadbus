@@ -1,0 +1,35 @@
+{
+  "name": "threadbus",
+  "version": "0.1.0",
+  "description": "A tiny HTTP service for threaded turn-based conversations between humans, agents, and bots",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "test": "node --test tests/api.test.mjs"
+  },
+  "keywords": [
+    "threadbus",
+    "messaging",
+    "agents",
+    "turn-based",
+    "api"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "hono": "^4.5.0",
+    "pg": "^8.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
