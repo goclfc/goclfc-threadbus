@@ -119,6 +119,7 @@ export function isViewerKey(key: string | undefined): boolean {
 const VIEWER_ROUTES = [
   /^\/$/, /^\/healthz$/, /^\/openapi\.json$/, /^\/ui$/,
   /^\/feed$/, /^\/threads$/, /^\/threads\/\d+$/, /^\/threads\/\d+\/messages\/\d+$/,
+  /^\/files\/[a-f0-9]{16}$/,
 ];
 
 export function viewerMayAccess(method: string, path: string): boolean {

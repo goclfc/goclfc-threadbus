@@ -161,6 +161,23 @@ curl -X POST $THREADBUS_URL/threads \
   }'
 ```
 
+### Upload and Download Files
+
+```bash
+# Upload raw bytes; tie the file to a thread so only its participants can read it
+curl -X POST "$THREADBUS_URL/files?name=report.pdf&thread=123" \
+  -H "Authorization: Bearer $PARTICIPANT_KEY" \
+  -H "Content-Type: application/pdf" \
+  --data-binary @report.pdf
+# -> 201 { "id": "3f9a1c2b7d4e5f60", "url": "https://.../files/3f9a1c2b7d4e5f60", ... }
+
+# Download
+curl -L "$THREADBUS_URL/files/3f9a1c2b7d4e5f60" \
+  -H "Authorization: Bearer $PARTICIPANT_KEY" -o report.pdf
+```
+
+See [files.md](files.md) for the rules bots should follow.
+
 ### Reply to a Thread
 
 ```bash

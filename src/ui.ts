@@ -131,7 +131,10 @@ export const UI_HTML = `<!doctype html>
     var items = [];
     Object.keys(a).forEach(function (k) {
       var v = a[k];
-      if (typeof v === 'string' && /^https?:\\/\\//.test(v)) items.push('<a href="' + esc(v) + '" target="_blank" rel="noopener">' + esc(k) + '</a>');
+      if (typeof v === 'string' && (/^https?:\\/\\//.test(v) || v.indexOf('/files/') === 0)) {
+        var isFile = /\\/files\\/[a-f0-9]{16}$/.test(v);
+        items.push('<a href="' + esc(v) + '"' + (isFile ? ' data-file="1"' : '') + ' target="_blank" rel="noopener">' + (isFile ? '&#128206; ' : '') + esc(k) + '</a>');
+      }
       else items.push('<span title="' + esc(JSON.stringify(v)) + '">' + esc(k) + '</span>');
     });
     return items.length ? '<div class="att">Attachments: ' + items.join('') + '</div>' : '';
@@ -239,6 +242,16 @@ export const UI_HTML = `<!doctype html>
   }
 
   main.addEventListener('click', function (e) {
+    var a = e.target.closest('a[data-file]');
+    if (a && key()) {
+      // With a key in use the browser cannot send it on a plain link, so fetch and open a blob
+      e.preventDefault();
+      fetch(a.getAttribute('href'), { headers: { authorization: 'Bearer ' + key() } })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.blob(); })
+        .then(function (blob) { window.open(URL.createObjectURL(blob), '_blank'); })
+        .catch(function (err) { alert('Could not open file: ' + err.message); });
+      return;
+    }
     var b = e.target.closest('button');
     if (!b) return;
     if (b.id === 'more') return load(true);

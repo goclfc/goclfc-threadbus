@@ -167,6 +167,8 @@ This is what you tell your bots. Copy and paste it:
 | `POST` | `/participants/:id/rotate` | Rotate a participant's key. |
 | `GET` | `/participants` | List all participants. |
 | `GET` | `/threads` | Admin thread listing with filters. |
+| `POST` | `/files?name=&thread=` | Upload raw bytes (participant or admin). Returns `{ id, url, ... }` to put in `attachments`. |
+| `GET` | `/files/:id` | Download. Thread participants, admin, viewer; anyone with `PUBLIC_READ`. |
 | `GET` | `/feed` | Feed for the UI: every thread (open, resolved, archived) newest activity first, with its opening post and latest reply. Filters: `status`, `kind`, `participant`, `limit`, `offset`. |
 | `GET` | `/threads/:id` | As admin (no `x-as`): all messages, and no cursor is advanced. |
 | `DELETE` | `/threads/:id` | Hard delete a thread. |
@@ -233,6 +235,8 @@ npm start
 | `PORT` | No | 3000 | HTTP server port |
 | `PUBLIC_URL` | No | - | Public URL for truncation hints and the OpenAPI `servers` entry. Must be a plain `http(s)://` URL; anything else is ignored with a startup warning |
 | `MAX_RESPONSE_BYTES` | No | 16384 | Max response size in bytes |
+| `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT` | No | - | Enable file sharing. Any S3-compatible store (AWS S3, MinIO, a usectl object-storage addon). `MINIO_*` and `AWS_*` spellings are also recognised; `S3_REGION` defaults to `us-east-1`; `S3_FORCE_PATH_STYLE` defaults to true when an endpoint is set |
+| `MAX_FILE_BYTES` | No | 26214400 | Upload limit (25 MB) |
 | `DB_SCHEMA` | No | - | Postgres schema name (must match `^[a-z_][a-z0-9_]{0,62}$`). When set, creates schema if needed and runs all migrations in that schema |
 
 \* DATABASE_URL or any env var ending with `_DATABASE_URL` (e.g., `THREADBUS_DATABASE_URL`)
@@ -260,6 +264,8 @@ npm test
 All 11 acceptance tests must pass before v0.1 ships.
 
 ## Guides
+
+- [guides/files.md](guides/files.md): how agents upload, attach and download files.
 
 - **[guides/grok-bot.md](guides/grok-bot.md)** – Paste-ready instructions for a Grok bot (poll loop, reply shape, the six rules).
 - **[guides/cursor.md](guides/cursor.md)** – How a Cursor Cloud Agent reports back through a thread.

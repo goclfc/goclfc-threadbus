@@ -27,6 +27,18 @@ import {
 } from './threads.js';
 import { UI_HTML } from './ui.js';
 import {
+  initFiles,
+  filesEnabled,
+  maxFileBytes,
+  newFileId,
+  safeFileName,
+  objectKeyFor,
+  putFile,
+  getFile,
+  serveType,
+  type FileRow
+} from './files.js';
+import {
   getNext,
   getInbox,
   getDigest,
@@ -127,10 +139,15 @@ app.use('*', async (c, next) => {
 app.get('/', async (c) => {
   const base = {
     name: 'ThreadBus',
-    version: '0.1.3',
+    version: '0.2.0',
     description: 'A tiny HTTP service for threaded turn-based conversations',
     docs: '/openapi.json',
-    ui: '/ui'
+    ui: '/ui',
+    features: {
+      files: filesEnabled(),
+      max_file_bytes: filesEnabled() ? maxFileBytes() : 0,
+      public_read: publicReadEnabled()
+    }
   };
   
   // Counts are only for callers holding a key; anonymous gets the banner.
@@ -170,7 +187,7 @@ app.get('/openapi.json', (c) => {
     openapi: '3.0.0',
     info: {
       title: 'ThreadBus API',
-      version: '0.1.3',
+      version: '0.2.0',
       description: 'A tiny HTTP service for threaded turn-based conversations'
     },
     servers: [{ url: getPublicUrl() || 'http://localhost:3000' }],
@@ -603,6 +620,105 @@ app.get('/threads', async (c) => {
   return c.json({ threads: rows });
 });
 
+// Files. Bytes in, URL out. Any participant or admin can upload; reading
+// follows the same rules as threads (viewer/admin see all, a participant
+// needs to be in the file's thread if it has one, PUBLIC_READ opens GET).
+
+// POST /files?name=<filename>&thread=<id>
+app.post('/files', async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return;
+  
+  if (!filesEnabled()) {
+    return c.json({ error: 'not_configured', message: 'File storage is not configured on this server' }, 501);
+  }
+  
+  const uploadedBy = getActingParticipant(c, auth);
+  const name = safeFileName(c.req.query('name') || c.req.header('x-filename'));
+  const contentType = (c.req.header('content-type') || 'application/octet-stream').split(';')[0].trim();
+  const threadParam = c.req.query('thread');
+  let threadId: number | null = null;
+  
+  if (threadParam) {
+    threadId = parseInt(threadParam);
+    if (!Number.isInteger(threadId)) {
+      return c.json({ error: 'validation_error', message: 'thread must be a thread id' }, 400);
+    }
+    if (auth.id !== 'admin' || c.req.header('x-as')) {
+      const hasAccess = await checkThreadAccess(threadId, uploadedBy);
+      if (!hasAccess) {
+        return c.json({ error: 'forbidden', message: 'Not a thread participant' }, 403);
+      }
+    }
+  }
+  
+  const declared = parseInt(c.req.header('content-length') || '0');
+  if (declared > maxFileBytes()) {
+    return c.json({ error: 'too_large', message: `File exceeds ${maxFileBytes()} bytes` }, 413);
+  }
+  
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  if (bytes.byteLength === 0) {
+    return c.json({ error: 'validation_error', message: 'Empty body; send the file bytes as the request body' }, 400);
+  }
+  if (bytes.byteLength > maxFileBytes()) {
+    return c.json({ error: 'too_large', message: `File exceeds ${maxFileBytes()} bytes` }, 413);
+  }
+  
+  const id = newFileId();
+  const key = objectKeyFor(id, name);
+  await putFile(key, bytes, contentType);
+  
+  const { rows: [row] } = await pool.query<FileRow>(
+    `INSERT INTO files (id, name, content_type, size, object_key, uploaded_by, thread_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, name, content_type, size, uploaded_by, thread_id, created_at`,
+    [id, name, contentType, bytes.byteLength, key, uploadedBy, threadId]
+  );
+  
+  const url = `${getPublicUrl() || ''}/files/${id}`;
+  return c.json({ ...row, url }, 201);
+});
+
+// GET /files/:id[?download=1]
+app.get('/files/:id', async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return;
+  
+  if (!filesEnabled()) {
+    return c.json({ error: 'not_configured', message: 'File storage is not configured on this server' }, 501);
+  }
+  
+  const id = c.req.param('id');
+  const { rows: [file] } = await pool.query<FileRow>('SELECT * FROM files WHERE id = $1', [id]);
+  if (!file) {
+    return c.json({ error: 'not_found', message: 'File not found' }, 404);
+  }
+  
+  if (file.thread_id !== null && !isReadAllPrincipal(c, auth)) {
+    const hasAccess = await checkThreadAccess(file.thread_id, getActingParticipant(c, auth));
+    if (!hasAccess) {
+      return c.json({ error: 'forbidden', message: 'Not a participant of the file\'s thread' }, 403);
+    }
+  }
+  
+  const bytes = await getFile(file.object_key);
+  const { type, inline } = serveType(file.content_type);
+  const disposition = inline && c.req.query('download') !== '1' ? 'inline' : 'attachment';
+  
+  const payload = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return c.body(payload, 200, {
+    'content-type': type,
+    'content-length': String(bytes.byteLength),
+    'content-disposition': `${disposition}; filename="${file.name}"`,
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'; sandbox",
+    'cache-control': 'private, max-age=3600',
+    'x-threadbus-file-name': file.name,
+    'x-threadbus-uploaded-by': file.uploaded_by
+  });
+});
+
 // GET /feed - admin only. Threads newest-activity first, each with its opening
 // message (the "post") and a preview of the latest message. Resolved and
 // archived threads are included: nothing is ever hidden from the feed.
@@ -683,7 +799,7 @@ app.delete('/threads/:id', async (c) => {
 const port = parseInt(process.env.PORT || '3000');
 
 async function start() {
-  console.log('ThreadBus v0.1.3 starting...');
+  console.log('ThreadBus v0.2.0 starting...');
   
   try {
     const dbSource = getDbSource();
@@ -726,6 +842,13 @@ async function start() {
   console.log('Running migrations...');
   await migrate();
   console.log('Migrations complete');
+  
+  const s3 = await initFiles();
+  if (s3) {
+    console.log(`File sharing enabled: bucket ${s3.bucket} (${s3.source}), max ${maxFileBytes()} bytes`);
+  } else {
+    console.log('File sharing disabled (set S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY and S3_ENDPOINT to enable)');
+  }
 }
 
 start().then(() => {
