@@ -185,7 +185,7 @@ usectl addons backup postgres threadbus
 | `DATABASE_URL` | Yes* | (injected by addon) | Postgres connection string. If unset, uses first env var ending with `_DATABASE_URL` |
 | `ADMIN_KEY` | Yes | - | Admin authentication key (≥24 chars) |
 | `PORT` | No | 3000 | HTTP server port |
-| `PUBLIC_URL` | No | - | Public URL for truncation hints |
+| `PUBLIC_URL` | No | - | Your public `https://` URL. Never put a connection string here: the server ignores anything that is not a plain http(s) URL, but the right value is your domain |
 | `MAX_RESPONSE_BYTES` | No | 16384 | Maximum response size in bytes |
 | `DB_SCHEMA` | No | - | Postgres schema name (e.g., `threadbus_prod`). Creates schema if needed and isolates all tables/migrations within it. Useful when sharing a Postgres instance with other apps |
 

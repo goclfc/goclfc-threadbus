@@ -20,6 +20,7 @@ import {
   type CreateThreadInput,
   type CreateMessageInput
 } from './threads.js';
+import { UI_HTML } from './ui.js';
 import {
   getNext,
   getInbox,
@@ -29,6 +30,21 @@ import {
 } from './next.js';
 
 const app = new Hono();
+
+// PUBLIC_URL is echoed into public responses (openapi servers, truncation hints),
+// so only accept a real http(s) URL. Anything else (e.g. a connection string
+// pasted into the wrong variable) is ignored rather than leaked.
+function getPublicUrl(raw: string | undefined = process.env.PUBLIC_URL): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    if (u.username || u.password) return undefined;
+    return raw.replace(/\/+$/, '');
+  } catch {
+    return undefined;
+  }
+}
 
 // Rate limiting map
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
@@ -93,7 +109,7 @@ app.get('/', async (c) => {
   
   return c.json({
     name: 'ThreadBus',
-    version: '0.1.1',
+    version: '0.1.2',
     description: 'A tiny HTTP service for threaded turn-based conversations',
     stats: {
       participants: parseInt(stats.participants),
@@ -101,7 +117,8 @@ app.get('/', async (c) => {
       resolved_threads: parseInt(stats.resolved_threads),
       messages: parseInt(stats.messages)
     },
-    docs: '/openapi.json'
+    docs: '/openapi.json',
+    ui: '/ui'
   });
 });
 
@@ -117,12 +134,19 @@ app.get('/openapi.json', (c) => {
     openapi: '3.0.0',
     info: {
       title: 'ThreadBus API',
-      version: '0.1.1',
+      version: '0.1.2',
       description: 'A tiny HTTP service for threaded turn-based conversations'
     },
-    servers: [{ url: process.env.PUBLIC_URL || 'http://localhost:3000' }],
+    servers: [{ url: getPublicUrl() || 'http://localhost:3000' }],
     paths: {}
   });
+});
+
+// GET /ui - admin feed page. The page itself holds no data; it asks for the
+// admin key and calls /feed and /threads/:id from the browser.
+app.get('/ui', (c) => {
+  c.header('cache-control', 'no-store');
+  return c.html(UI_HTML);
 });
 
 // GET /next
@@ -150,7 +174,7 @@ app.get('/next', async (c) => {
   
   // Apply budget
   const maxResponseBytes = parseInt(process.env.MAX_RESPONSE_BYTES || '16384');
-  const publicUrl = process.env.PUBLIC_URL;
+  const publicUrl = getPublicUrl();
   
   const result = {
     participant: participantId,
@@ -279,9 +303,10 @@ app.get('/threads/:id', async (c) => {
       return c.json({ error: 'not_found', message: 'Thread not found' }, 404);
     }
     
-    // Get cursor
+    // Get cursor. Admin (without x-as) is not a participants row, so it has no
+    // cursor: it reads everything and advances nothing.
     let sinceSeq = 0;
-    if (!all) {
+    if (!all && !isAdmin) {
       const { rows: [cursor] } = await client.query(
         'SELECT seen_seq FROM cursors WHERE thread_id = $1 AND participant = $2',
         [threadId, participantId]
@@ -301,12 +326,14 @@ app.get('/threads/:id', async (c) => {
     );
     
     // Advance cursor
-    await client.query(
-      `INSERT INTO cursors (thread_id, participant, seen_seq)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (thread_id, participant) DO UPDATE SET seen_seq = $3`,
-      [threadId, participantId, thread.seq]
-    );
+    if (!isAdmin) {
+      await client.query(
+        `INSERT INTO cursors (thread_id, participant, seen_seq)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (thread_id, participant) DO UPDATE SET seen_seq = $3`,
+        [threadId, participantId, thread.seq]
+      );
+    }
     
     await client.query('COMMIT');
     
@@ -538,6 +565,63 @@ app.get('/threads', async (c) => {
   return c.json({ threads: rows });
 });
 
+// GET /feed - admin only. Threads newest-activity first, each with its opening
+// message (the "post") and a preview of the latest message. Resolved and
+// archived threads are included: nothing is ever hidden from the feed.
+app.get('/feed', async (c) => {
+  const auth = await requireAuth(c);
+  if (!auth) return;
+  
+  if (auth.id !== 'admin') {
+    return c.json({ error: 'forbidden', message: 'Admin only' }, 403);
+  }
+  
+  const status = c.req.query('status');
+  const kind = c.req.query('kind');
+  const participant = c.req.query('participant');
+  const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '50') || 50, 1), 100);
+  const offset = Math.max(parseInt(c.req.query('offset') || '0') || 0, 0);
+  
+  let where = 'WHERE 1=1';
+  const params: any[] = [];
+  
+  if (status) {
+    params.push(status);
+    where += ` AND t.status = $${params.length}`;
+  }
+  if (kind) {
+    params.push(kind);
+    where += ` AND t.kind = $${params.length}`;
+  }
+  if (participant) {
+    params.push(participant);
+    where += ` AND $${params.length} = ANY(t.participants)`;
+  }
+  
+  const { rows: [{ total }] } = await pool.query(
+    `SELECT COUNT(*)::int AS total FROM threads t ${where}`,
+    params
+  );
+  
+  params.push(limit, offset);
+  const { rows: threads } = await pool.query(
+    `SELECT t.id, t.title, t.kind, t.status, t.waiting_on, t.participants, t.created_by,
+            t.outcome, t.seq, t.created_at, t.updated_at,
+            (SELECT json_build_object('seq', m.seq, 'author', m.author, 'to', m."to",
+                    'body', m.body, 'attachments', m.attachments, 'created_at', m.created_at)
+               FROM messages m WHERE m.thread_id = t.id ORDER BY m.seq ASC LIMIT 1) AS first_message,
+            (SELECT json_build_object('seq', m.seq, 'author', m.author, 'to', m."to",
+                    'body', left(m.body, 280), 'resolved', m.resolved, 'created_at', m.created_at)
+               FROM messages m WHERE m.thread_id = t.id ORDER BY m.seq DESC LIMIT 1) AS last_message
+     FROM threads t ${where}
+     ORDER BY t.updated_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+  
+  return c.json({ threads, total, limit, offset });
+});
+
 // DELETE /threads/:id
 app.delete('/threads/:id', async (c) => {
   const auth = await requireAuth(c);
@@ -561,7 +645,7 @@ app.delete('/threads/:id', async (c) => {
 const port = parseInt(process.env.PORT || '3000');
 
 async function start() {
-  console.log('ThreadBus v0.1.1 starting...');
+  console.log('ThreadBus v0.1.2 starting...');
   
   try {
     const dbSource = getDbSource();
@@ -574,6 +658,10 @@ async function start() {
   } catch (err: any) {
     console.error(err.message);
     process.exit(1);
+  }
+  
+  if (process.env.PUBLIC_URL && !getPublicUrl()) {
+    console.warn('PUBLIC_URL is not a plain http(s) URL; ignoring it');
   }
   
   if (!process.env.ADMIN_KEY || process.env.ADMIN_KEY.length < 24) {

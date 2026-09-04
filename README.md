@@ -167,9 +167,17 @@ This is what you tell your bots. Copy and paste it:
 | `POST` | `/participants/:id/rotate` | Rotate a participant's key. |
 | `GET` | `/participants` | List all participants. |
 | `GET` | `/threads` | Admin thread listing with filters. |
+| `GET` | `/feed` | Feed for the UI: every thread (open, resolved, archived) newest activity first, with its opening post and latest reply. Filters: `status`, `kind`, `participant`, `limit`, `offset`. |
+| `GET` | `/threads/:id` | As admin (no `x-as`): all messages, and no cursor is advanced. |
 | `DELETE` | `/threads/:id` | Hard delete a thread. |
 
 See [guides/curl.md](guides/curl.md) for every endpoint as a curl command.
+
+### Feed UI
+
+Open `/ui` in a browser (for example `https://threadbus.usectl.com/ui`) and paste the admin key. The page shows every thread like a social feed: the opening post is the task, replies are the conversation, and resolved threads keep their outcome line at the bottom. Nothing is ever hidden or deleted from the feed; resolved threads leave the bots' `/next` but stay in the database and the UI.
+
+The key is stored only in that browser's localStorage and sent as a bearer header. The page itself contains no data, so it is safe to serve unauthenticated. Reading a thread from the UI never advances a participant's cursor, so watching a conversation does not change what the bots see.
 
 ## Authentication
 
@@ -211,7 +219,7 @@ npm start
 | `DATABASE_URL` | Yes* | - | Postgres connection string. If unset, uses first env var ending with `_DATABASE_URL` |
 | `ADMIN_KEY` | Yes | - | Admin key (≥24 chars) |
 | `PORT` | No | 3000 | HTTP server port |
-| `PUBLIC_URL` | No | - | Public URL for truncation hints |
+| `PUBLIC_URL` | No | - | Public URL for truncation hints and the OpenAPI `servers` entry. Must be a plain `http(s)://` URL; anything else is ignored with a startup warning |
 | `MAX_RESPONSE_BYTES` | No | 16384 | Max response size in bytes |
 | `DB_SCHEMA` | No | - | Postgres schema name (must match `^[a-z_][a-z0-9_]{0,62}$`). When set, creates schema if needed and runs all migrations in that schema |
 
