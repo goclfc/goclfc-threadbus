@@ -64,7 +64,9 @@ before(async () => {
         ...process.env,
         DATABASE_URL,
         ADMIN_KEY,
-        PORT
+        PORT,
+        // Deliberately wrong: a connection string in PUBLIC_URL must never be echoed
+        PUBLIC_URL: 'postgres://user:secret@db.internal:5432/threadbus'
       },
       stdio: 'pipe'
     });
@@ -427,6 +429,112 @@ describe('ThreadBus v0.1 Acceptance Tests', () => {
       `Admin digest should include thread #${privateThreadId}, got: ${digest.data}`);
     
     console.log('✓ Test 11: Admin sees all threads in digest');
+  });
+
+  test('Test 12: PUBLIC_URL that is not http(s) is never echoed', async () => {
+    const res = await request('GET', '/openapi.json', { expectStatus: 200 });
+    const url = res.data.servers[0].url;
+    assert.ok(!url.includes('secret'), `openapi servers leaked PUBLIC_URL: ${url}`);
+    assert.ok(url.startsWith('http://') || url.startsWith('https://'), `unexpected servers url: ${url}`);
+    
+    console.log('✓ Test 12: PUBLIC_URL hardening');
+  });
+  
+  test('Test 13: Admin feed shows every thread with post and last reply', async () => {
+    // Fresh thread so we know its shape exactly
+    const created = await request('POST', '/threads', {
+      headers: { authorization: `Bearer ${claudeKey}` },
+      body: { title: 'Feed thread', kind: 'x-task', to: 'weebo', body: 'Post 5 replies about ThreadBus' },
+      expectStatus: 201
+    });
+    const id = created.data.id;
+    
+    await request('POST', `/threads/${id}/messages`, {
+      headers: { authorization: `Bearer ${weeboKey}` },
+      body: { body: 'Which account should I use?', to: 'claude' },
+      expectStatus: 201
+    });
+    
+    // Participants cannot read the feed
+    await request('GET', '/feed', {
+      headers: { authorization: `Bearer ${claudeKey}` },
+      expectStatus: 403
+    });
+    
+    const feed = await request('GET', '/feed', {
+      headers: { authorization: `Bearer ${ADMIN_KEY}` },
+      expectStatus: 200
+    });
+    assert.ok(Array.isArray(feed.data.threads));
+    assert.ok(typeof feed.data.total === 'number');
+    
+    // Newest activity first, so our thread is on top
+    const t = feed.data.threads[0];
+    assert.strictEqual(t.id, id);
+    assert.strictEqual(t.first_message.author, 'claude');
+    assert.strictEqual(t.first_message.body, 'Post 5 replies about ThreadBus');
+    assert.strictEqual(t.last_message.author, 'weebo');
+    assert.strictEqual(t.last_message.seq, 2);
+    assert.strictEqual(t.seq, 2);
+    
+    // Resolved threads stay in the feed
+    await request('POST', `/threads/${id}/messages`, {
+      headers: { authorization: `Bearer ${claudeKey}` },
+      body: { body: 'Never mind, done.', resolve: true, outcome: 'Cancelled' },
+      expectStatus: 201
+    });
+    const resolved = await request('GET', '/feed?status=resolved', {
+      headers: { authorization: `Bearer ${ADMIN_KEY}` },
+      expectStatus: 200
+    });
+    const r = resolved.data.threads.find(x => x.id === id);
+    assert.ok(r, 'resolved thread missing from feed');
+    assert.strictEqual(r.outcome, 'Cancelled');
+    assert.strictEqual(r.last_message.resolved, true);
+    
+    console.log('✓ Test 13: Admin feed');
+  });
+  
+  test('Test 14: Admin reads a whole thread without touching cursors', async () => {
+    const created = await request('POST', '/threads', {
+      headers: { authorization: `Bearer ${claudeKey}` },
+      body: { title: 'Cursor safety', to: 'weebo', body: 'first' },
+      expectStatus: 201
+    });
+    const id = created.data.id;
+    await request('POST', `/threads/${id}/messages`, {
+      headers: { authorization: `Bearer ${weeboKey}` },
+      body: { body: 'second', to: 'claude' },
+      expectStatus: 201
+    });
+    
+    // Admin (no x-as) gets every message, twice in a row
+    for (let i = 0; i < 2; i++) {
+      const res = await request('GET', `/threads/${id}`, {
+        headers: { authorization: `Bearer ${ADMIN_KEY}` },
+        expectStatus: 200
+      });
+      assert.strictEqual(res.data.messages.length, 2, 'admin should always see all messages');
+    }
+    
+    // claude has not been shown weebo's reply, so /next still owes it
+    const next = await request('GET', '/next?limit=10', {
+      headers: { authorization: `Bearer ${claudeKey}` },
+      expectStatus: 200
+    });
+    const mine = next.data.threads.find(x => x.id === id);
+    assert.ok(mine, 'thread should still be pending for claude');
+    assert.strictEqual(mine.unread, 1, 'admin read must not advance claude cursor');
+    
+    console.log('✓ Test 14: Admin thread read is cursor-safe');
+  });
+  
+  test('Test 15: UI page is served', async () => {
+    const res = await request('GET', '/ui', { expectStatus: 200 });
+    assert.ok(res.data.includes('<title>ThreadBus</title>'));
+    assert.ok(res.data.includes("'/feed?limit="));
+    
+    console.log('✓ Test 15: UI page');
   });
   
 });

@@ -121,6 +121,9 @@ json form returns the same fields. digest never includes bodies.
 - `GET /participants` → list without keys, with `last_seen_at` (updated by every authenticated request) and `open_threads` count.
 - `GET /threads?status=&kind=&participant=&limit=&offset=` → admin listing, summaries only.
 - `DELETE /threads/:id` → hard delete (admin only).
+- `GET /feed?status=&kind=&participant=&limit=&offset=` → every thread newest activity first, each with `first_message` (the post) and `last_message` (280-char preview), plus `total`. resolved and archived threads are included; the feed never hides anything.
+- `GET /threads/:id` as admin without `x-as` → all messages, no cursor written. admin is not a participants row and must never move anyone's cursor.
+- `GET /ui` → the feed page. no data inside; the browser holds the admin key and calls `/feed`.
 
 ### public
 
@@ -146,7 +149,7 @@ postgres. tables: `participants (id, name, kind, key_hash, created_at, last_seen
 ## stack
 
 - node 22, typescript, one process. hono (or plain `node:http`) for routing, `pg` for the database, no orm.
-- config from env: `DATABASE_URL` (required), `ADMIN_KEY` (required, ≥24 chars), `PORT` (default 3000), `PUBLIC_URL` (for links in truncation hints), `MAX_RESPONSE_BYTES` (default 16384).
+- config from env: `DATABASE_URL` (required), `ADMIN_KEY` (required, ≥24 chars), `PORT` (default 3000), `PUBLIC_URL` (for links in truncation hints and the openapi `servers` entry; must be a plain http(s) url, anything else is ignored so a misplaced secret is never echoed), `MAX_RESPONSE_BYTES` (default 16384).
 - `Dockerfile` (multi-stage, distroless or alpine, runs as non-root), `docker-compose.yml` with postgres for local use, `npm test` running `node --test` against a real postgres.
 - logging: one json line per request with participant, route, status, bytes, ms. no bodies in logs.
 - rate limit: 60 requests per minute per key, 429 with `retry-after`.
@@ -175,7 +178,7 @@ guides/usectl.md       deploy on usectl in three commands (postgres addon, env, 
 
 ## out of scope for v0.1 (v0.2 candidates)
 
-webhooks per participant (push instead of poll), sqlite backend, file attachments, a minimal web ui for humans, thread templates, per-kind response budgets, signed urls for public read-only threads.
+webhooks per participant (push instead of poll), sqlite backend, file attachments, thread templates, per-kind response budgets, signed urls for public read-only threads.
 
 ## acceptance test (must pass before v0.1 ships)
 
