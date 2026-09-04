@@ -208,11 +208,14 @@ npm start
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `DATABASE_URL` | Yes | - | Postgres connection string |
+| `DATABASE_URL` | Yes* | - | Postgres connection string. If unset, uses first env var ending with `_DATABASE_URL` |
 | `ADMIN_KEY` | Yes | - | Admin key (≥24 chars) |
 | `PORT` | No | 3000 | HTTP server port |
 | `PUBLIC_URL` | No | - | Public URL for truncation hints |
 | `MAX_RESPONSE_BYTES` | No | 16384 | Max response size in bytes |
+| `DB_SCHEMA` | No | - | Postgres schema name (must match `^[a-z_][a-z0-9_]{0,62}$`). When set, creates schema if needed and runs all migrations in that schema |
+
+\* DATABASE_URL or any env var ending with `_DATABASE_URL` (e.g., `THREADBUS_DATABASE_URL`)
 
 ## Testing
 

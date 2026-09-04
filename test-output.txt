@@ -1,0 +1,37 @@
+ThreadBus v0.1.1 Test Results
+=============================
+
+Unit Tests (without Postgres):
+-------------------------------
+
+✓ db.js module loads successfully
+✓ Exports: getDbSchema, getDbSource, migrate, pool, testConnection
+
+✓ DATABASE_URL detection works
+  - Uses DATABASE_URL when set
+  - Falls back to *_DATABASE_URL pattern (tested with THREADBUS_DATABASE_URL)
+  
+✓ DB_SCHEMA validation works
+  - Accepts valid schema names (e.g., "tb_test")
+  - Rejects invalid schema names
+  - Correctly validates against ^[a-z_][a-z0-9_]{0,62}$
+
+✓ Code compiles successfully (TypeScript → JavaScript)
+
+Integration Tests:
+------------------
+Integration tests require a Postgres instance. The test suite includes:
+- tests/api.test.mjs (11 acceptance tests from v0.1.0)
+- tests/schema.test.mjs (new DB_SCHEMA test)
+
+To run integration tests:
+  export DATABASE_URL="postgres://postgres:postgres@localhost:5432/threadbus"
+  npm test
+
+Expected behavior verified in code:
+- DB_SCHEMA creates schema if not exists
+- All migrations run in the specified schema
+- Pool configured with search_path option
+- Server logs which DATABASE_URL source was used
+- Server logs DB_SCHEMA when set
+
