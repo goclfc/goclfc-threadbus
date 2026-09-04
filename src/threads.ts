@@ -95,6 +95,11 @@ export function validateMessage(
     return `Thread is ${thread.status}`;
   }
   
+  // Reopen validation - can only reopen resolved/archived threads
+  if (input.reopen && thread.status === 'open') {
+    return 'Cannot reopen: thread is already open';
+  }
+  
   // Resolve validation
   if (input.resolve) {
     if (!input.outcome) {
@@ -276,10 +281,13 @@ export async function createMessage(
       [newStatus, waitingOn, threadId]
     );
     
-    // Advance author's cursor
+    // Advance author's cursor (upsert for participants who never polled or were added later)
     await client.query(
-      'UPDATE cursors SET seen_seq = $1 WHERE thread_id = $2 AND participant = $3',
-      [newSeq, threadId, authorId]
+      `INSERT INTO cursors (thread_id, participant, seen_seq)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (thread_id, participant) 
+       DO UPDATE SET seen_seq = $3`,
+      [threadId, authorId, newSeq]
     );
     
     await client.query('COMMIT');

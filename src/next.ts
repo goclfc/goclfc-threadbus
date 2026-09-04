@@ -120,6 +120,9 @@ export async function getInbox(
   since?: string,
   limit: number = 20
 ): Promise<{ threads: InboxThread[]; etag: string }> {
+  // Admin sees all threads; others see only threads they're in
+  const isAdmin = participantId === 'admin';
+  
   let query = `
     SELECT 
       t.id, t.title, t.kind, t.status, t.waiting_on, t.seq, t.updated_at, t.outcome,
@@ -127,7 +130,7 @@ export async function getInbox(
       (SELECT author FROM messages WHERE thread_id = t.id ORDER BY seq DESC LIMIT 1) as last_author
     FROM threads t
     LEFT JOIN cursors c ON c.thread_id = t.id AND c.participant = $1
-    WHERE $1 = ANY(t.participants)
+    ${isAdmin ? 'WHERE 1=1' : 'WHERE $1 = ANY(t.participants)'}
   `;
   const params: any[] = [participantId];
   
@@ -150,8 +153,10 @@ export async function getInbox(
   
   // Compute etag
   const { rows: [{ max: maxUpdated }] } = await pool.query(
-    `SELECT MAX(updated_at) as max FROM threads WHERE $1 = ANY(participants)`,
-    [participantId]
+    isAdmin 
+      ? 'SELECT MAX(updated_at) as max FROM threads'
+      : 'SELECT MAX(updated_at) as max FROM threads WHERE $1 = ANY(participants)',
+    isAdmin ? [] : [participantId]
   );
   const etag = computeEtag(participantId, maxUpdated);
   
@@ -191,14 +196,17 @@ export async function getDigest(
 ): Promise<{ threads: DigestThread[] }> {
   const sinceDate = since || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   
+  // Admin sees all threads; others see only threads they're in
+  const isAdmin = participantId === 'admin';
+  
   const { rows } = await pool.query(
     `SELECT 
        t.id, t.kind, t.status, t.created_by, t.waiting_on, t.title, t.outcome, t.updated_at,
        (SELECT author FROM messages WHERE thread_id = t.id ORDER BY seq DESC LIMIT 1) as last_author
      FROM threads t
-     WHERE $1 = ANY(t.participants) AND t.updated_at >= $2
+     WHERE ${isAdmin ? '1=1' : '$1 = ANY(t.participants)'} AND t.updated_at >= $${isAdmin ? '1' : '2'}
      ORDER BY t.updated_at DESC`,
-    [participantId, sinceDate]
+    isAdmin ? [sinceDate] : [participantId, sinceDate]
   );
   
   const threads: DigestThread[] = rows.map(row => ({

@@ -1,11 +1,15 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
+import { spawn } from 'child_process';
 
-const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3300';
 const ADMIN_KEY = process.env.ADMIN_KEY || 'admin_key_with_at_least_24_characters_here';
+const PORT = process.env.PORT || '3300';
+const DATABASE_URL = process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/threadbus';
 
 let claudeKey, weeboKey, marioKey;
 let testThreadId;
+let serverProcess;
 
 async function request(method, path, { headers = {}, body, expectStatus } = {}) {
   const url = BASE_URL + path;
@@ -38,6 +42,55 @@ async function request(method, path, { headers = {}, body, expectStatus } = {}) 
   
   return { status: res.status, data, headers: res.headers };
 }
+
+async function waitForServer(maxAttempts = 30) {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      await fetch(`${BASE_URL}/healthz`);
+      return true;
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  return false;
+}
+
+before(async () => {
+  // Only start server if BASE_URL is not set
+  if (!process.env.BASE_URL) {
+    console.log('Starting server...');
+    serverProcess = spawn('node', ['dist/server.js'], {
+      env: {
+        ...process.env,
+        DATABASE_URL,
+        ADMIN_KEY,
+        PORT
+      },
+      stdio: 'pipe'
+    });
+    
+    serverProcess.stdout.on('data', (data) => {
+      console.log(`[server] ${data}`);
+    });
+    
+    serverProcess.stderr.on('data', (data) => {
+      console.error(`[server] ${data}`);
+    });
+    
+    const ready = await waitForServer();
+    if (!ready) {
+      throw new Error('Server did not start in time');
+    }
+    console.log('Server ready');
+  }
+});
+
+after(async () => {
+  if (serverProcess) {
+    console.log('Stopping server...');
+    serverProcess.kill();
+  }
+});
 
 describe('ThreadBus v0.1 Acceptance Tests', () => {
   
@@ -347,6 +400,33 @@ describe('ThreadBus v0.1 Acceptance Tests', () => {
     assert.strictEqual(res.data.db, true);
     
     console.log('✓ Test 10: Healthcheck passes');
+  });
+  
+  test('Test 11: Admin sees all threads in digest', async () => {
+    // Create a thread between claude and weebo (admin is not a participant)
+    const threadRes = await request('POST', '/threads', {
+      headers: { authorization: `Bearer ${claudeKey}` },
+      body: {
+        title: 'Private thread',
+        to: 'weebo',
+        body: 'Admin should see this in digest'
+      },
+      expectStatus: 201
+    });
+    const privateThreadId = threadRes.data.id;
+    
+    // Admin polls digest (should see threads even though not a participant)
+    const digest = await request('GET', '/digest?format=text', {
+      headers: { authorization: `Bearer ${ADMIN_KEY}` },
+      expectStatus: 200
+    });
+    
+    // Should see the private thread
+    assert.ok(typeof digest.data === 'string');
+    assert.ok(digest.data.includes(`#${privateThreadId}`), 
+      `Admin digest should include thread #${privateThreadId}, got: ${digest.data}`);
+    
+    console.log('✓ Test 11: Admin sees all threads in digest');
   });
   
 });

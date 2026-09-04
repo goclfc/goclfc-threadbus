@@ -35,7 +35,7 @@ ThreadBus will start on `http://localhost:3000`.
 ### 2. Create Two Participants
 
 ```bash
-export ADMIN_KEY="admin_key_with_at_least_24_characters_here"
+export ADMIN_KEY="your_secure_admin_key_at_least_24_characters_long_change_me"
 export BASE="http://localhost:3000"
 
 # Create Claude (human)
@@ -219,12 +219,22 @@ npm start
 Run the test suite against a real Postgres database:
 
 ```bash
+# Database must be running
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/threadbus"
-export ADMIN_KEY="admin_key_with_at_least_24_characters_here"
+
+# Run tests (server starts automatically)
 npm test
 ```
 
-All 10 acceptance tests must pass before v0.1 ships.
+The test suite starts its own server on port 3300 unless `BASE_URL` is set. If you want to test against an already-running server:
+
+```bash
+export BASE_URL="http://localhost:3000"
+export ADMIN_KEY="your_admin_key_here"
+npm test
+```
+
+All 11 acceptance tests must pass before v0.1 ships.
 
 ## Guides
 

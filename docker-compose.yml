@@ -23,7 +23,7 @@ services:
       - "3000:3000"
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/threadbus
-      ADMIN_KEY: admin_key_with_at_least_24_characters_here
+      ADMIN_KEY: your_secure_admin_key_at_least_24_characters_long_change_me
       PORT: 3000
       PUBLIC_URL: http://localhost:3000
     depends_on:

@@ -226,7 +226,11 @@ app.post('/threads/:id/messages', async (c) => {
   
   const error = validateMessage(body, thread, participantId);
   if (error) {
-    return c.json({ error: 'validation_error', message: error }, error.includes('resolved') || error.includes('archived') ? 409 : 400);
+    const is409 = error.includes('resolved') || error.includes('archived') || error.includes('already open');
+    return c.json({ 
+      error: error.includes('already open') ? 'not_resolved' : 'validation_error', 
+      message: error 
+    }, is409 ? 409 : 400);
   }
   
   try {
@@ -251,10 +255,13 @@ app.get('/threads/:id', async (c) => {
   const since = c.req.query('since');
   const all = c.req.query('all') === '1';
   
-  // Check access
-  const hasAccess = await checkThreadAccess(threadId, participantId);
-  if (!hasAccess) {
-    return c.json({ error: 'forbidden', message: 'Not a thread participant' }, 403);
+  // Check access (admin sees all threads)
+  const isAdmin = auth.id === 'admin' && !c.req.header('x-as');
+  if (!isAdmin) {
+    const hasAccess = await checkThreadAccess(threadId, participantId);
+    if (!hasAccess) {
+      return c.json({ error: 'forbidden', message: 'Not a thread participant' }, 403);
+    }
   }
   
   const client = await pool.connect();
